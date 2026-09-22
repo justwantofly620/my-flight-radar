@@ -1,3 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Flight Radar</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FlightRadar">
+
+  <!-- Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #fff; }
+    
+    #app-container { display: flex; width: 100vw; height: 100vh; }
+    #map-wrapper { flex: 1; height: 100%; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    .map-zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+    }
+    .zoom-btn {
+      width: 40px;
+      height: 40px;
+      background: rgba(20, 20, 20, 0.85);
+      border: 1px solid #444;
+      border-radius: 6px;
+      color: #00ff66;
+      font-size: 20px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .zoom-btn:active { background: #333; }
+
+    /* 右側航電儀表板 */
+    #sidebar {
+      width: 320px;
+      height: 100%;
+      background: #0a0a0a;
+      border-left: 2px solid #222;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 12px;
+      z-index: 10;
+    }
+
+    .clock-section { margin-bottom: 6px; }
+    .clock-date { font-family: Consolas, monospace; font-size: 13px; font-weight: bold; color: #888; }
+    .clock-time { font-family: Consolas, monospace; font-size: 36px; font-weight: bold; color: #fff; letter-spacing: -1.5px; line-height: 1.1; }
+
+    .target-card {
+      border: 1px solid #333;
+      border-radius: 4px;
+      background: #141414;
+      padding: 8px 10px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .card-header { font-size: 11px; font-weight: bold; color: #ffd700; margin-bottom: 4px; }
+    .callsign-row { display: flex; justify-content: space-between; align-items: flex-start; }
+    .callsign { font-size: 20px; font-weight: bold; color: #fff; line-height: 1.2; }
+    .airline-name { font-size: 12px; font-weight: bold; color: #ff9800; margin-top: 2px; margin-bottom: 6px; }
+
+    .logo-frame {
+      width: 58px;
+      height: 38px;
+      background: #ffffff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px;
+      overflow: hidden;
+    }
+    .airline-logo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    .card-divider { height: 1px; background: #333; margin: 4px 0 6px 0; }
+
+    .flight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 12px; }
+    .flight-grid .col-left { display: flex; flex-direction: column; gap: 3px; }
+    .flight-grid .col-right { display: flex; flex-direction: column; gap: 3px; border-left: 1px solid #222; padding-left: 6px; }
+
+    .val-type { color: #00e5ff; font-weight: bold; }
+    .val-reg { color: #b388ff; font-weight: bold; }
+    .val-dep, .val-arr { color: #ffd15c; font-weight: bold; }
+    .val-time { color: #79c0ff; }
+
+    .airbornes-tag { margin-top: auto; font-size: 14px; font-weight: bold; color: #00ff66; padding-top: 4px; }
+
+    .controls { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn {
+      flex: 1;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #00e676;
+      font-size: 12px;
+      font-weight: bold;
+      padding: 9px 0;
+      border-radius: 4px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn:active { background: #333; }
+    .btn-cfg { background: #263238; color: #00e5ff; }
+
+    .plane-marker {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .plane-icon {
+      width: 26px;
+      height: 26px;
+      transform-origin: center center;
+    }
+    .plane-label {
+      font-family: Consolas, monospace;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 1px 4px;
+      border-radius: 2px;
+      margin-top: 1px;
+      white-space: nowrap;
+    }
+    .focused .plane-label { color: #ffd700; border: 1px solid #ffd700; }
+
+    #config-modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 999;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-box {
+      background: #181a1b;
+      border: 1px solid #444;
+      border-radius: 8px;
+      width: 320px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .modal-box h3 { font-size: 15px; color: #00e5ff; text-align: center; }
+    .input-group { display: flex; flex-direction: column; gap: 3px; }
+    .input-group label { font-size: 11px; color: #aaa; }
+    .input-group input {
+      background: #222;
+      border: 1px solid #444;
+      color: #fff;
+      padding: 7px 8px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .search-row { display: flex; gap: 6px; }
+    .search-row input { flex: 1; text-transform: uppercase; font-weight: bold; color: #ffd700; letter-spacing: 1px; }
+    .btn-search {
+      width: 90px;
+      background: #00838f;
+      color: #fff;
+      font-weight: bold;
+      font-size: 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .modal-btns { display: flex; gap: 8px; margin-top: 6px; }
+    .status-hint { font-size: 11px; color: #ffd700; min-height: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div id="app-container">
+  <div id="map-wrapper">
+    <div id="map"></div>
+    <div class="map-zoom-controls">
+      <div class="zoom-btn" onclick="map.zoomIn()">＋</div>
+      <div class="zoom-btn" onclick="map.zoomOut()">－</div>
+    </div>
+  </div>
+
+  <div id="sidebar">
+    <div class="clock-section">
+      <div id="clock-date" class="clock-date">----/--/-- ---</div>
+      <div id="clock-time" class="clock-time">--:--:--</div>
+    </div>
+
+    <div class="target-card">
+      <div id="card-status" class="card-header">NEAREST TARGET</div>
+      <div class="callsign-row">
+        <div>
+          <div id="card-callsign" class="callsign">SEARCHING...</div>
+          <div id="card-airline" class="airline-name">Airline: ---</div>
+        </div>
+        <div class="logo-frame">
+          <img id="card-logo" class="airline-logo" alt="logo" />
+        </div>
+      </div>
+
+      <div class="card-divider"></div>
+
+      <div class="flight-grid">
+        <div class="col-left">
+          <div>Type: <span id="val-type" class="val-type">---</span></div>
+          <div>Reg : <span id="val-reg" class="val-reg">---</span></div>
+          <div>Alt : <span id="val-alt">---</span> ft</div>
+          <div>Spd : <span id="val-spd">---</span> kts</div>
+          <div>Dist: <span id="val-dist">---</span> NM</div>
+          <div>Trk : <span id="val-trk">---</span>°</div>
+        </div>
+        <div class="col-right">
+          <div>Dep : <span id="val-dep" class="val-dep">---</span></div>
+          <div>Arr : <span id="val-arr" class="val-arr">---</span></div>
+          <div>ATD : <span id="val-atd" class="val-time">---</span></div>
+          <div>ETA : <span id="val-eta" class="val-time">---</span></div>
+          <div>EET : <span id="val-eet" class="val-time">---</span></div>
+        </div>
+      </div>
+
+      <div id="val-count" class="airbornes-tag">Airbornes: 0</div>
+    </div>
+
+    <div class="controls">
+      <div class="btn-row">
+        <div class="btn" onclick="relocateToGPS()">📍 GPS Fix</div>
+        <div class="btn" onclick="resetToEVA()">🏢 EVA Training Center</div>
+      </div>
+      <div class="btn btn-cfg" onclick="openConfigModal()">✈ Set Center / Airport Code</div>
+    </div>
+  </div>
+</div>
+
+<div id="config-modal">
+  <div class="modal-box">
+    <h3>✈ Set Radar Center & Airport</h3>
+
+    <div class="input-group">
+      <label>Airport Code (IATA / ICAO):</label>
+      <div class="search-row">
+        <input type="text" id="cfg-airport-code" placeholder="e.g. TPE, RCTP" />
+        <button class="btn-search" onclick="searchAirportCode()">Search</button>
+      </div>
+    </div>
+
+    <div id="search-status" class="status-hint"></div>
+
+    <div class="card-divider"></div>
+
+    <div class="input-group">
+      <label>Latitude:</label>
+      <input type="number" step="0.0001" id="cfg-lat">
+    </div>
+
+    <div class="input-group">
+      <label>Longitude:</label>
+      <input type="number" step="0.0001" id="cfg-lon">
+    </div>
+
+    <div class="input-group">
+      <label>Radius (NM, default: 35):</label>
+      <input type="number" id="cfg-range" value="35">
+    </div>
+
+    <div class="modal-btns">
+      <div class="btn" style="background:#00e676; color:#000;" onclick="saveConfig()">Save & Apply</div>
+      <div class="btn" style="background:#444; color:#fff;" onclick="closeConfigModal()">Cancel</div>
+    </div>
+  </div>
+</div>
+
 <script>
   mapboxgl.accessToken = 'pk.eyJ1IjoiczE5ODgxMjA0IiwiYSI6ImNtdTZiNm8yMDA3OGgyd29nYnRicDI0aHIifQ.2sRRvPv8OaEvu5DAIJDlMw';
   
@@ -40,15 +340,34 @@
     attributionControl: false
   });
 
-  function updateRadarRings() {
-    const centerPoint = turf.point([centerLon, centerLat]);
-    const circle10 = turf.circle(centerPoint, 10 * 1.852, { steps: 128, units: 'kilometers' });
-    const circle20 = turf.circle(centerPoint, 20 * 1.852, { steps: 128, units: 'kilometers' });
-    const circle30 = turf.circle(centerPoint, 30 * 1.852, { steps: 128, units: 'kilometers' });
+  // 原生測地圓形演算法（完全不依賴外部 CDN 函式庫，絕不當機）
+  function makeCircleGeoJSON(centerLat, centerLon, radiusNm, points = 64) {
+    const coords = [];
+    const rKm = radiusNm * 1.852;
+    const dLat = rKm / 111.0;
+    const dLon = rKm / (111.0 * Math.cos(centerLat * Math.PI / 180.0));
 
+    for (let i = 0; i <= points; i++) {
+      const theta = (i / points) * (2 * Math.PI);
+      const lat = centerLat + dLat * Math.sin(theta);
+      const lon = centerLon + dLon * Math.cos(theta);
+      coords.push([lon, lat]);
+    }
+
+    return {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [coords] }
+    };
+  }
+
+  function updateRadarRings() {
     const geojsonData = {
       type: "FeatureCollection",
-      features: [circle10, circle20, circle30]
+      features: [
+        makeCircleGeoJSON(centerLat, centerLon, 10),
+        makeCircleGeoJSON(centerLat, centerLon, 20),
+        makeCircleGeoJSON(centerLat, centerLon, 30)
+      ]
     };
 
     if (map.getSource('radar-rings')) {
@@ -106,8 +425,6 @@
   updateClock();
 
   let isFetching = false;
-
-  // 雙通道抓取：OpenSky (免代理直通) + Worker 備援
   async function fetchFlightsDualSource() {
     if (isFetching) return;
     isFetching = true;
@@ -123,10 +440,9 @@
 
     let parsed = [];
 
-    // 通道 1：OpenSky Network 直連
     try {
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 4000);
+      const tid = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(`https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`, {
         signal: controller.signal
       });
@@ -161,14 +477,13 @@
       console.warn("OpenSky failed, switching to backup...", e);
     }
 
-    // 通道 2 備援：若 OpenSky 沒回應，走快速公共代理拉取 airplanes.live
     if (parsed.length === 0) {
       try {
         const target = `https://api.airplanes.live/v2/point/${centerLat.toFixed(4)}/${centerLon.toFixed(4)}/${radarRangeNm}`;
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`;
         
         const controller2 = new AbortController();
-        const tid2 = setTimeout(() => controller2.abort(), 4000);
+        const tid2 = setTimeout(() => controller2.abort(), 3500);
         const res2 = await fetch(proxyUrl, { signal: controller2.signal });
         clearTimeout(tid2);
 
@@ -193,7 +508,7 @@
           }
         }
       } catch (err2) {
-        console.warn("AllOrigins backup also failed:", err2);
+        console.warn("Backup proxy failed:", err2);
       }
     }
 
@@ -202,7 +517,6 @@
       renderPlanesOnMap();
       updateSidebar();
     } else {
-      // 保持前一次資料，若一直為 0 則顯示狀態
       if (planesData.length === 0) {
         countElem.innerText = "Airbornes: 0 (Connecting...)";
       }
@@ -466,6 +780,7 @@
     updateSidebar();
   });
 
-  // 每 5 秒進行一次穩定抓取
   setInterval(fetchFlightsDualSource, 5000);
 </script>
+</body>
+</html>
