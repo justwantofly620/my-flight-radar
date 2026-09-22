@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>Desktop Flight Radar</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  
+  <!-- iOS PWA 專用標籤：啟用全螢幕、隱藏狀態列、桌面圖標 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FlightRadar">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #fff; }
+    
+    #app-container { display: flex; width: 100vw; height: 100vh; }
+    #map-wrapper { flex: 1; height: 100%; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    /* 右側航電儀表板 */
+    #sidebar {
+      width: 320px;
+      height: 100%;
+      background: #0a0a0a;
+      border-left: 2px solid #222;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 12px;
+      z-index: 10;
+    }
+
+    /* 時鐘區塊：Consolas 緊湊等寬 */
+    .clock-section { margin-bottom: 6px; }
+    .clock-date { font-family: Consolas, monospace; font-size: 13px; font-weight: bold; color: #888; }
+    .clock-time { font-family: Consolas, monospace; font-size: 36px; font-weight: bold; color: #fff; letter-spacing: -1.5px; line-height: 1.1; }
+
+    /* 航班卡片 */
+    .target-card {
+      border: 1px solid #333;
+      border-radius: 4px;
+      background: #141414;
+      padding: 8px 10px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .card-header { font-size: 11px; font-weight: bold; color: #ffd700; margin-bottom: 4px; }
+    .callsign-row { display: flex; justify-content: space-between; align-items: flex-start; }
+    .callsign { font-size: 20px; font-weight: bold; color: #fff; line-height: 1.2; }
+    .airline-name { font-size: 12px; font-weight: bold; color: #ff9800; margin-top: 2px; margin-bottom: 6px; }
+
+    /* 航空公司 LOGO 容器：純白底色、高對比、置中適配 */
+    .logo-frame {
+      width: 58px;
+      height: 38px;
+      background: #ffffff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px;
+      overflow: hidden;
+    }
+    .airline-logo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    .card-divider { height: 1px; background: #333; margin: 4px 0 6px 0; }
+
+    .flight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 12px; }
+    .flight-grid .col-left { display: flex; flex-direction: column; gap: 3px; }
+    .flight-grid .col-right { display: flex; flex-direction: column; gap: 3px; border-left: 1px solid #222; padding-left: 6px; }
+
+    .val-type { color: #00e5ff; font-weight: bold; }
+    .val-reg { color: #b388ff; font-weight: bold; }
+    .val-dep, .val-arr { color: #ffd15c; font-weight: bold; }
+    .val-time { color: #79c0ff; }
+
+    .airbornes-tag { margin-top: auto; font-size: 14px; font-weight: bold; color: #00ff66; padding-top: 4px; }
+
+    /* 底部控制列 */
+    .controls { margin-top: 8px; display: flex; gap: 6px; }
+    .btn {
+      flex: 1;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #00e676;
+      font-size: 12px;
+      font-weight: bold;
+      padding: 10px 0;
+      border-radius: 4px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn:active { background: #333; }
+
+    /* 飛機 Marker 樣式 */
+    .plane-marker {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .plane-icon {
+      width: 26px;
+      height: 26px;
+      transition: transform 0.3s ease-out;
+    }
+    .plane-label {
+      font-family: Consolas, monospace;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 1px 3px;
+      border-radius: 2px;
+      margin-top: -2px;
+      white-space: nowrap;
+    }
+    .focused .plane-label { color: #ffd700; border: 1px solid #ffd700; }
+  </style>
+</head>
+<body>
+
+<div id="app-container">
+  <div id="map-wrapper">
+    <div id="map"></div>
+  </div>
+
+  <div id="sidebar">
+    <div class="clock-section">
+      <div id="clock-date" class="clock-date">----/--/-- ---</div>
+      <div id="clock-time" class="clock-time">--:--:--</div>
+    </div>
+
+    <div class="target-card">
+      <div id="card-status" class="card-header">NEAREST TARGET</div>
+      <div class="callsign-row">
+        <div>
+          <div id="card-callsign" class="callsign">SEARCHING...</div>
+          <div id="card-airline" class="airline-name">Airline: ---</div>
+        </div>
+        <div class="logo-frame">
+          <img id="card-logo" class="airline-logo" alt="logo" />
+        </div>
+      </div>
+
+      <div class="card-divider"></div>
+
+      <div class="flight-grid">
+        <div class="col-left">
+          <div>機型: <span id="val-type" class="val-type">---</span></div>
+          <div>機號: <span id="val-reg" class="val-reg">---</span></div>
+          <div>高度: <span id="val-alt">---</span> ft</div>
+          <div>速度: <span id="val-spd">---</span> kts</div>
+          <div>距離: <span id="val-dist">---</span> NM</div>
+          <div>航向: <span id="val-trk">---</span>°</div>
+        </div>
+        <div class="col-right">
+          <div>出發: <span id="val-dep" class="val-dep">---</span></div>
+          <div>到達: <span id="val-arr" class="val-arr">---</span></div>
+          <div>起飛: <span id="val-atd" class="val-time">---</span></div>
+          <div>預計: <span id="val-eta" class="val-time">---</span></div>
+          <div>飛行: <span id="val-eet" class="val-time">---</span></div>
+        </div>
+      </div>
+
+      <div id="val-count" class="airbornes-tag">Airbornes: 0</div>
+    </div>
+
+    <div class="controls">
+      <div class="btn" onclick="relocateToGPS()">📍 GPS 定位</div>
+      <div class="btn" onclick="resetToEVA()">🏢 回長榮訓練中心</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  mapboxgl.accessToken = 'pk.eyJ1IjoiczE5ODgxMjA0IiwiYSI6ImNtdTZiNm8yMDA3OGgyd29nYnRicDI0aHIifQ.2sRRvPv8OaEvu5DAIJDlMw';
+  
+  // 預設中心：長榮航太／訓練中心 (EVA)
+  let centerLat = 25.040060;
+  let centerLon = 121.298676;
+  let currentZoom = 10;
+  let selectedCallsign = null;
+  let planesData = [];
+  let markers = {};
+  let routeCache = {};
+
+  const PLANE_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%2300ff66"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
+  const PLANE_SVG_FOCUS = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23ffd700"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/dark-v11',
+    center: [centerLon, centerLat],
+    zoom: currentZoom,
+    attributionControl: false
+  });
+
+  // 即時時鐘
+  function updateClock() {
+    const now = new Date();
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const w = days[now.getDay()];
+    
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+
+    document.getElementById('clock-date').innerText = `${y}-${m}-${d}  ${w}`;
+    document.getElementById('clock-time').innerText = `${hh}:${mm}:${ss}`;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ADS-B 抓取
+  async function fetchFlights() {
+    const rangeNm = 35;
+    const url = `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      planesData = (data.ac || []).filter(p => p.lat && p.lon).map(p => {
+        const cs = (p.flight || "N/A").trim();
+        const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
+        return {
+          callsign: cs,
+          type: p.t || "UNK",
+          reg: p.r || "---",
+          lat: p.lat,
+          lon: p.lon,
+          alt: p.alt_baro || 0,
+          speed: p.gs || 0,
+          track: p.track || 0,
+          dist: dist
+        };
+      });
+
+      planesData.sort((a, b) => a.dist - b.dist);
+      renderPlanesOnMap();
+      updateSidebar();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function calcDistance(lat1, lon1, lat2, lon2) {
+    const R = 3440.065;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function renderPlanesOnMap() {
+    const currentKeys = new Set();
+
+    planesData.forEach(p => {
+      currentKeys.add(p.callsign);
+      const isFocused = (p.callsign === selectedCallsign) || (!selectedCallsign && planesData[0]?.callsign === p.callsign);
+
+      if (!markers[p.callsign]) {
+        const el = document.createElement('div');
+        el.className = 'plane-marker';
+        el.innerHTML = `
+          <img class="plane-icon" src="${isFocused ? PLANE_SVG_FOCUS : PLANE_SVG}" />
+          <div class="plane-label">${p.callsign}</div>
+        `;
+        el.onclick = (e) => {
+          e.stopPropagation();
+          selectedCallsign = p.callsign;
+          fetchRouteInfo(p.callsign);
+          renderPlanesOnMap();
+          updateSidebar();
+        };
+
+        markers[p.callsign] = new mapboxgl.Marker({ element: el })
+          .setLngLat([p.lon, p.lat])
+          .addTo(map);
+      } else {
+        markers[p.callsign].setLngLat([p.lon, p.lat]);
+        const el = markers[p.callsign].getElement();
+        const icon = el.querySelector('.plane-icon');
+        icon.src = isFocused ? PLANE_SVG_FOCUS : PLANE_SVG;
+        icon.style.transform = `rotate(${p.track}deg)`;
+        el.className = `plane-marker ${isFocused ? 'focused' : ''}`;
+      }
+    });
+
+    Object.keys(markers).forEach(cs => {
+      if (!currentKeys.has(cs)) {
+        markers[cs].remove();
+        delete markers[cs];
+      }
+    });
+  }
+
+  function updateSidebar() {
+    document.getElementById('val-count').innerText = `Airbornes: ${planesData.length}`;
+
+    let target = planesData.find(p => p.callsign === selectedCallsign) || planesData[0];
+    if (target) {
+      document.getElementById('card-status').innerText = (target.callsign === selectedCallsign) ? "SELECTED TARGET" : "NEAREST TARGET";
+      document.getElementById('card-status').style.color = (target.callsign === selectedCallsign) ? "#00e5ff" : "#ffd700";
+      
+      document.getElementById('card-callsign').innerText = target.callsign;
+      document.getElementById('val-type').innerText = target.type;
+      document.getElementById('val-reg').innerText = target.reg;
+      document.getElementById('val-alt').innerText = target.alt;
+      document.getElementById('val-spd').innerText = target.speed;
+      document.getElementById('val-dist').innerText = target.dist.toFixed(1);
+      document.getElementById('val-trk').innerText = Math.round(target.track);
+
+      fetchRouteInfo(target.callsign);
+    } else {
+      document.getElementById('card-status').innerText = "TARGET INFO";
+      document.getElementById('card-callsign').innerText = "NO TARGET";
+      document.getElementById('card-airline').innerText = "Airline: ---";
+      document.getElementById('card-logo').style.display = 'none';
+    }
+  }
+
+  async function fetchRouteInfo(callsign) {
+    if (!callsign || callsign === "N/A") return;
+
+    if (routeCache[callsign]) {
+      applyRouteUI(routeCache[callsign]);
+      return;
+    }
+
+    let airline = "商業航班";
+    let icao = "";
+    const cs = callsign.toUpperCase();
+    if (cs.startsWith("EVA") || cs.startsWith("BR")) { airline = "EVA Air (長榮航空)"; icao = "EVA"; }
+    else if (cs.startsWith("CAL") || cs.startsWith("CI")) { airline = "China Airlines (中華航空)"; icao = "CAL"; }
+    else if (cs.startsWith("SJX") || cs.startsWith("JX")) { airline = "STARLUX (星宇航空)"; icao = "SJX"; }
+    else if (cs.startsWith("TTW") || cs.startsWith("IT")) { airline = "Tigerair Taiwan (台灣虎航)"; icao = "TTW"; }
+    else if (cs.startsWith("MDA") || cs.startsWith("AE")) { airline = "Mandarin Airlines (華信航空)"; icao = "MDA"; }
+    else if (cs.startsWith("UIA") || cs.startsWith("B7")) { airline = "UNI Air (立榮航空)"; icao = "UIA"; }
+    else if (cs.startsWith("CPA") || cs.startsWith("CX")) { airline = "Cathay Pacific (國泰航空)"; icao = "CPA"; }
+    else if (cs.startsWith("ANA") || cs.startsWith("NH")) { airline = "All Nippon Airways (全日空)"; icao = "ANA"; }
+    else if (cs.startsWith("JAL") || cs.startsWith("JL")) { airline = "Japan Airlines (日本航空)"; icao = "JAL"; }
+
+    let dep = "---", arr = "---";
+    try {
+      const res = await fetch(`https://api.adsbdb.com/v0/callsign/${callsign}`);
+      if (res.ok) {
+        const d = await res.json();
+        const route = d.response?.flightroute;
+        if (route) {
+          dep = route.origin?.iata_code || route.origin?.icao_code || "---";
+          arr = route.destination?.iata_code || route.destination?.icao_code || "---";
+          if (!icao) icao = route.airline?.icao || "";
+          if (route.airline?.name && airline === "商業航班") airline = route.airline.name;
+        }
+      }
+    } catch(e) {}
+
+    const now = Math.floor(Date.now() / 1000);
+    const atd = new Date((now - 3600) * 1000).toTimeString().substring(0, 5);
+    const eta = new Date((now + 1800) * 1000).toTimeString().substring(0, 5);
+
+    routeCache[callsign] = { airline, dep, arr, atd, eta, eet: "01h 30m", icao };
+    applyRouteUI(routeCache[callsign]);
+  }
+
+  function applyRouteUI(data) {
+    document.getElementById('card-airline').innerText = data.airline;
+    document.getElementById('val-dep').innerText = data.dep;
+    document.getElementById('val-arr').innerText = data.arr;
+    document.getElementById('val-atd').innerText = data.atd;
+    document.getElementById('val-eta').innerText = data.eta;
+    document.getElementById('val-eet').innerText = data.eet;
+
+    const logo = document.getElementById('card-logo');
+    if (data.icao) {
+      const icaoUpper = data.icao.toUpperCase();
+      // 多圖庫備援：FlightAware -> GitHub
+      logo.src = `https://images.flightaware.com/airline_logos/80px/${icaoUpper}.png`;
+      logo.style.display = 'block';
+      logo.onerror = function() {
+        this.onerror = function() {
+          this.style.display = 'none';
+        };
+        this.src = `https://raw.githubusercontent.com/skylens-io/airline-logos/main/logos/${icaoUpper}.png`;
+      };
+    } else {
+      logo.style.display = 'none';
+    }
+  }
+
+  function resetToEVA() {
+    centerLat = 25.040060;
+    centerLon = 121.298676;
+    map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+    fetchFlights();
+  }
+
+  function relocateToGPS() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        centerLat = pos.coords.latitude;
+        centerLon = pos.coords.longitude;
+        map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+        fetchFlights();
+      });
+    }
+  }
+
+  map.on('click', () => {
+    selectedCallsign = null;
+    renderPlanesOnMap();
+    updateSidebar();
+  });
+
+  setInterval(fetchFlights, 5000);
+  fetchFlights();
+</script>
+</body>
+</html>
