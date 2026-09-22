@@ -5,7 +5,6 @@
   <title>Desktop Flight Radar</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   
-  <!-- iOS PWA 專用標籤：啟用全螢幕、隱藏狀態列、桌面圖標 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FlightRadar">
@@ -57,7 +56,7 @@
     .callsign { font-size: 20px; font-weight: bold; color: #fff; line-height: 1.2; }
     .airline-name { font-size: 12px; font-weight: bold; color: #ff9800; margin-top: 2px; margin-bottom: 6px; }
 
-    /* 航空公司 LOGO 容器：純白底色、高對比、置中適配 */
+    /* 航空公司 LOGO 容器：純白底色 */
     .logo-frame {
       width: 58px;
       height: 38px;
@@ -90,7 +89,7 @@
 
     .airbornes-tag { margin-top: auto; font-size: 14px; font-weight: bold; color: #00ff66; padding-top: 4px; }
 
-    /* 底部控制列 */
+    /* 底部按鈕 */
     .controls { margin-top: 8px; display: flex; gap: 6px; }
     .btn {
       flex: 1;
@@ -106,7 +105,7 @@
     }
     .btn:active { background: #333; }
 
-    /* 飛機 Marker 樣式 */
+    /* 飛機 Marker */
     .plane-marker {
       display: flex;
       flex-direction: column;
@@ -199,6 +198,7 @@
   let planesData = [];
   let markers = {};
   let routeCache = {};
+  let centerMarker = null;
 
   const PLANE_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%2300ff66"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
   const PLANE_SVG_FOCUS = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23ffd700"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`;
@@ -209,6 +209,75 @@
     center: [centerLon, centerLat],
     zoom: currentZoom,
     attributionControl: false
+  });
+
+  // 計算距圈多邊形 GeoJSON
+  function createGeoJSONCircle(center, radiusInKm, points = 64) {
+    const coords = { latitude: center[1], longitude: center[0] };
+    const km = radiusInKm;
+    const ret = [];
+    const distanceX = km / (111.320 * Math.cos((coords.latitude * Math.PI) / 180));
+    const distanceY = km / 110.574;
+
+    for (let i = 0; i < points; i++) {
+      const theta = (i / points) * (2 * Math.PI);
+      const x = distanceX * Math.cos(theta);
+      const y = distanceY * Math.sin(theta);
+      ret.push([coords.longitude + x, coords.latitude + y]);
+    }
+    ret.push(ret[0]);
+    return {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ret] }
+    };
+  }
+
+  // 繪製航電距圈圖層
+  function updateRadarRings() {
+    const r10 = createGeoJSONCircle([centerLon, centerLat], 10 * 1.852);
+    const r20 = createGeoJSONCircle([centerLon, centerLat], 20 * 1.852);
+    const r30 = createGeoJSONCircle([centerLon, centerLat], 30 * 1.852);
+
+    const geojsonData = {
+      type: "FeatureCollection",
+      features: [r10, r20, r30]
+    };
+
+    if (map.getSource('radar-rings')) {
+      map.getSource('radar-rings').setData(geojsonData);
+    } else {
+      map.addSource('radar-rings', { type: 'geojson', data: geojsonData });
+      map.addLayer({
+        id: 'radar-rings-line',
+        type: 'line',
+        source: 'radar-rings',
+        paint: {
+          'line-color': '#00ff66',
+          'line-width': 1.5,
+          'line-opacity': 0.65
+        }
+      });
+    }
+
+    // 更新中心紅點標記
+    if (!centerMarker) {
+      const el = document.createElement('div');
+      el.style.width = '8px';
+      el.style.height = '8px';
+      el.style.backgroundColor = 'red';
+      el.style.borderRadius = '50%';
+      el.style.boxShadow = '0 0 6px red';
+      centerMarker = new mapboxgl.Marker({ element: el })
+        .setLngLat([centerLon, centerLat])
+        .addTo(map);
+    } else {
+      centerMarker.setLngLat([centerLon, centerLat]);
+    }
+  }
+
+  map.on('load', () => {
+    updateRadarRings();
+    fetchFlights();
   });
 
   // 即時時鐘
@@ -230,37 +299,49 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // ADS-B 抓取
+  // ADS-B 抓取（多來源容錯與 CORS 代理）
   async function fetchFlights() {
     const rangeNm = 35;
-    const url = `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-      
-      planesData = (data.ac || []).filter(p => p.lat && p.lon).map(p => {
-        const cs = (p.flight || "N/A").trim();
-        const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
-        return {
-          callsign: cs,
-          type: p.t || "UNK",
-          reg: p.r || "---",
-          lat: p.lat,
-          lon: p.lon,
-          alt: p.alt_baro || 0,
-          speed: p.gs || 0,
-          track: p.track || 0,
-          dist: dist
-        };
-      });
+    const endpoints = [
+      `https://api.airplanes.live/v2/point/${centerLat.toFixed(6)}/${centerLon.toFixed(6)}/${rangeNm}`,
+      `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`,
+      `https://corsproxy.io/?https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`
+    ];
 
-      planesData.sort((a, b) => a.dist - b.dist);
-      renderPlanesOnMap();
-      updateSidebar();
-    } catch (e) {
-      console.error(e);
+    let data = null;
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (res.ok) {
+          data = await res.json();
+          if (data && data.ac) break;
+        }
+      } catch (err) {
+        // 嘗試下一個備援源
+      }
     }
+
+    if (!data || !data.ac) return;
+
+    planesData = (data.ac || []).filter(p => p.lat && p.lon).map(p => {
+      const cs = (p.flight || "N/A").trim();
+      const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
+      return {
+        callsign: cs,
+        type: p.t || "UNK",
+        reg: p.r || "---",
+        lat: p.lat,
+        lon: p.lon,
+        alt: p.alt_baro || 0,
+        speed: p.gs || 0,
+        track: p.track || 0,
+        dist: dist
+      };
+    });
+
+    planesData.sort((a, b) => a.dist - b.dist);
+    renderPlanesOnMap();
+    updateSidebar();
   }
 
   function calcDistance(lat1, lon1, lat2, lon2) {
@@ -335,8 +416,20 @@
       fetchRouteInfo(target.callsign);
     } else {
       document.getElementById('card-status').innerText = "TARGET INFO";
+      document.getElementById('card-status').style.color = "#888";
       document.getElementById('card-callsign').innerText = "NO TARGET";
       document.getElementById('card-airline').innerText = "Airline: ---";
+      document.getElementById('val-type').innerText = "---";
+      document.getElementById('val-reg').innerText = "---";
+      document.getElementById('val-alt').innerText = "---";
+      document.getElementById('val-spd').innerText = "---";
+      document.getElementById('val-dist').innerText = "---";
+      document.getElementById('val-trk').innerText = "---";
+      document.getElementById('val-dep').innerText = "---";
+      document.getElementById('val-arr').innerText = "---";
+      document.getElementById('val-atd').innerText = "---";
+      document.getElementById('val-eta').innerText = "---";
+      document.getElementById('val-eet').innerText = "---";
       document.getElementById('card-logo').style.display = 'none';
     }
   }
@@ -396,7 +489,6 @@
     const logo = document.getElementById('card-logo');
     if (data.icao) {
       const icaoUpper = data.icao.toUpperCase();
-      // 多圖庫備援：FlightAware -> GitHub
       logo.src = `https://images.flightaware.com/airline_logos/80px/${icaoUpper}.png`;
       logo.style.display = 'block';
       logo.onerror = function() {
@@ -414,6 +506,7 @@
     centerLat = 25.040060;
     centerLon = 121.298676;
     map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+    updateRadarRings();
     fetchFlights();
   }
 
@@ -423,6 +516,7 @@
         centerLat = pos.coords.latitude;
         centerLon = pos.coords.longitude;
         map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+        updateRadarRings();
         fetchFlights();
       });
     }
@@ -435,7 +529,6 @@
   });
 
   setInterval(fetchFlights, 5000);
-  fetchFlights();
 </script>
 </body>
 </html>
