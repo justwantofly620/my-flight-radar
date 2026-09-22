@@ -232,7 +232,7 @@
     };
   }
 
-  // 繪製航電距圈圖層
+  // 繪製航電距圈
   function updateRadarRings() {
     const r10 = createGeoJSONCircle([centerLon, centerLat], 10 * 1.852);
     const r20 = createGeoJSONCircle([centerLon, centerLat], 20 * 1.852);
@@ -259,7 +259,6 @@
       });
     }
 
-    // 更新中心紅點標記
     if (!centerMarker) {
       const el = document.createElement('div');
       el.style.width = '8px';
@@ -299,31 +298,35 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // ADS-B 抓取（多來源容錯與 CORS 代理）
+  // ADS-B 抓取（使用 AllOrigins 專屬代理，徹底解決 CORS 封鎖）
   async function fetchFlights() {
     const rangeNm = 35;
-    const endpoints = [
-      `https://api.airplanes.live/v2/point/${centerLat.toFixed(6)}/${centerLon.toFixed(6)}/${rangeNm}`,
-      `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`,
-      `https://corsproxy.io/?https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`
+    const targetUrl = `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`;
+    
+    // 雙代理容錯：AllOrigins (最穩定解碼) + 直連備援
+    const proxyUrls = [
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      targetUrl
     ];
 
     let data = null;
-    for (const url of endpoints) {
+    for (const url of proxyUrls) {
       try {
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const res = await fetch(url);
         if (res.ok) {
           data = await res.json();
-          if (data && data.ac) break;
+          if (data && (data.ac || Array.isArray(data.aircraft))) break;
         }
       } catch (err) {
-        // 嘗試下一個備援源
+        // 嘗試下一個
       }
     }
 
-    if (!data || !data.ac) return;
+    if (!data) return;
+    const acList = data.ac || data.aircraft || [];
 
-    planesData = (data.ac || []).filter(p => p.lat && p.lon).map(p => {
+    planesData = acList.filter(p => p.lat && p.lon).map(p => {
       const cs = (p.flight || "N/A").trim();
       const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
       return {
@@ -457,7 +460,7 @@
 
     let dep = "---", arr = "---";
     try {
-      const res = await fetch(`https://api.adsbdb.com/v0/callsign/${callsign}`);
+      const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://api.adsbdb.com/v0/callsign/${callsign}`)}`);
       if (res.ok) {
         const d = await res.json();
         const route = d.response?.flightroute;
