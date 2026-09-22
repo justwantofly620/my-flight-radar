@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Desktop Flight Radar</title>
@@ -50,7 +50,7 @@
     }
     .zoom-btn:active { background: #333; }
 
-    /* 右側航電儀表板 */
+    /* 右側航電儀表板 (與電腦版完全對齊) */
     #sidebar {
       width: 320px;
       height: 100%;
@@ -234,19 +234,19 @@
 
       <div class="flight-grid">
         <div class="col-left">
-          <div>機型: <span id="val-type" class="val-type">---</span></div>
-          <div>機號: <span id="val-reg" class="val-reg">---</span></div>
-          <div>高度: <span id="val-alt">---</span> ft</div>
-          <div>速度: <span id="val-spd">---</span> kts</div>
-          <div>距離: <span id="val-dist">---</span> NM</div>
-          <div>航向: <span id="val-trk">---</span>°</div>
+          <div>Type: <span id="val-type" class="val-type">---</span></div>
+          <div>Reg : <span id="val-reg" class="val-reg">---</span></div>
+          <div>Alt : <span id="val-alt">---</span> ft</div>
+          <div>Spd : <span id="val-spd">---</span> kts</div>
+          <div>Dist: <span id="val-dist">---</span> NM</div>
+          <div>Trk : <span id="val-trk">---</span>°</div>
         </div>
         <div class="col-right">
-          <div>出發: <span id="val-dep" class="val-dep">---</span></div>
-          <div>到達: <span id="val-arr" class="val-arr">---</span></div>
-          <div>起飛: <span id="val-atd" class="val-time">---</span></div>
-          <div>預計: <span id="val-eta" class="val-time">---</span></div>
-          <div>飛行: <span id="val-eet" class="val-time">---</span></div>
+          <div>Dep : <span id="val-dep" class="val-dep">---</span></div>
+          <div>Arr : <span id="val-arr" class="val-arr">---</span></div>
+          <div>ATD : <span id="val-atd" class="val-time">---</span></div>
+          <div>ETA : <span id="val-eta" class="val-time">---</span></div>
+          <div>EET : <span id="val-eet" class="val-time">---</span></div>
         </div>
       </div>
 
@@ -255,23 +255,23 @@
 
     <div class="controls">
       <div class="btn-row">
-        <div class="btn" onclick="relocateToGPS()">📍 GPS 定位</div>
-        <div class="btn" onclick="resetToEVA()">🏢 回長榮訓練中心</div>
+        <div class="btn" onclick="relocateToGPS()">📍 GPS Fix</div>
+        <div class="btn" onclick="resetToEVA()">🏢 EVA Training Center</div>
       </div>
-      <div class="btn btn-cfg" onclick="openConfigModal()">✈ 輸入機場代碼 / 設定座標</div>
+      <div class="btn btn-cfg" onclick="openConfigModal()">✈ Set Center / Airport Code</div>
     </div>
   </div>
 </div>
 
 <div id="config-modal">
   <div class="modal-box">
-    <h3>✈ 機場代碼搜尋與定位</h3>
+    <h3>✈ Set Radar Center & Airport</h3>
 
     <div class="input-group">
-      <label>機場代碼 (IATA / ICAO，如 TPE, TSA, HND, KIX):</label>
+      <label>Airport Code (IATA / ICAO):</label>
       <div class="search-row">
-        <input type="text" id="cfg-airport-code" placeholder="如 TPE, RCTP" />
-        <button class="btn-search" onclick="searchAirportCode()">搜尋前往</button>
+        <input type="text" id="cfg-airport-code" placeholder="e.g. TPE, RCTP" />
+        <button class="btn-search" onclick="searchAirportCode()">Search</button>
       </div>
     </div>
 
@@ -280,23 +280,23 @@
     <div class="card-divider"></div>
 
     <div class="input-group">
-      <label>中心緯度 (Latitude):</label>
+      <label>Latitude:</label>
       <input type="number" step="0.0001" id="cfg-lat">
     </div>
 
     <div class="input-group">
-      <label>中心經度 (Longitude):</label>
+      <label>Longitude:</label>
       <input type="number" step="0.0001" id="cfg-lon">
     </div>
 
     <div class="input-group">
-      <label>雷達半徑 (NM，預設 35):</label>
+      <label>Radius (NM, default: 35):</label>
       <input type="number" id="cfg-range" value="35">
     </div>
 
     <div class="modal-btns">
-      <div class="btn" style="background:#00e676; color:#000;" onclick="saveConfig()">儲存並套用</div>
-      <div class="btn" style="background:#444; color:#fff;" onclick="closeConfigModal()">取消</div>
+      <div class="btn" style="background:#00e676; color:#000;" onclick="saveConfig()">Save & Apply</div>
+      <div class="btn" style="background:#444; color:#fff;" onclick="closeConfigModal()">Cancel</div>
     </div>
   </div>
 </div>
@@ -410,7 +410,6 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // 100% 毫秒級無阻塞資料抓取（帶 2.5 秒超時熔斷）
   let isFetching = false;
   async function fetchFlightsInstant() {
     if (isFetching) return;
@@ -451,7 +450,6 @@
         }
       }
     } catch (e) {
-      // 靜默逾時，直接等待下次週期
     } finally {
       isFetching = false;
     }
@@ -518,13 +516,12 @@
     });
   }
 
-  // 本地 0.001 秒航線資料解析器（完全不發任何外網請求，杜絕卡頓）
   function getInstantRouteInfo(callsign, alt, dist) {
     if (!callsign || callsign === "N/A") {
       return { airline: "---", dep: "---", arr: "---", atd: "---", eta: "---", eet: "---", icao: "" };
     }
 
-    let airline = "商業航班";
+    let airline = "Commercial";
     let icao = "";
     const cs = callsign.toUpperCase();
 
@@ -532,24 +529,23 @@
     else if (cs.startsWith("CAL") || cs.startsWith("CI")) { airline = "China Airlines (中華航空)"; icao = "CAL"; }
     else if (cs.startsWith("SJX") || cs.startsWith("JX")) { airline = "STARLUX (星宇航空)"; icao = "SJX"; }
     else if (cs.startsWith("TTW") || cs.startsWith("IT")) { airline = "Tigerair Taiwan (台灣虎航)"; icao = "TTW"; }
-    else if (cs.startsWith("MDA") || cs.startsWith("AE")) { airline = "Mandarin (華信航空)"; icao = "MDA"; }
+    else if (cs.startsWith("MDA") || cs.startsWith("AE")) { airline = "Mandarin Airlines (華信航空)"; icao = "MDA"; }
     else if (cs.startsWith("UIA") || cs.startsWith("B7")) { airline = "UNI Air (立榮航空)"; icao = "UIA"; }
     else if (cs.startsWith("CPA") || cs.startsWith("CX")) { airline = "Cathay Pacific (國泰航空)"; icao = "CPA"; }
-    else if (cs.startsWith("ANA") || cs.startsWith("NH")) { airline = "All Nippon (全日空)"; icao = "ANA"; }
+    else if (cs.startsWith("ANA") || cs.startsWith("NH")) { airline = "All Nippon Airways (全日空)"; icao = "ANA"; }
     else if (cs.startsWith("JAL") || cs.startsWith("JL")) { airline = "Japan Airlines (日本航空)"; icao = "JAL"; }
     else if (cs.startsWith("KAL") || cs.startsWith("KE")) { airline = "Korean Air (大韓航空)"; icao = "KAL"; }
-    else if (cs.startsWith("AAR") || cs.startsWith("OZ")) { airline = "Asiana (韓亞航空)"; icao = "AAR"; }
-    else if (cs.startsWith("SIA") || cs.startsWith("SQ")) { airline = "Singapore (新加坡航空)"; icao = "SIA"; }
-    else if (cs.startsWith("APJ") || cs.startsWith("MM")) { airline = "Peach (樂桃航空)"; icao = "APJ"; }
+    else if (cs.startsWith("AAR") || cs.startsWith("OZ")) { airline = "Asiana Airlines (韓亞航空)"; icao = "AAR"; }
+    else if (cs.startsWith("SIA") || cs.startsWith("SQ")) { airline = "Singapore Airlines (新航)"; icao = "SIA"; }
+    else if (cs.startsWith("APJ") || cs.startsWith("MM")) { airline = "Peach Aviation (樂桃航空)"; icao = "APJ"; }
     else if (cs.startsWith("FDX") || cs.startsWith("FX")) { airline = "FedEx Express (聯邦快遞)"; icao = "FDX"; }
     else if (cs.startsWith("UPS") || cs.startsWith("5X")) { airline = "UPS Airlines (優比速)"; icao = "UPS"; }
 
     let dep = "---", arr = "---";
     const now = Math.floor(Date.now() / 1000);
 
-    // 智能判斷降落與起飛態勢
     if (alt < 9000) {
-      dep = "周邊外站";
+      dep = "Origin";
       arr = (centerLat > 25.06 && centerLon > 121.45) ? "TSA" : "TPE";
       const etaMins = Math.max(3, Math.round(dist * 0.45));
       const atd = new Date((now - 7200) * 1000).toTimeString().substring(0, 5);
@@ -557,7 +553,7 @@
       return { airline, dep, arr, atd, eta, eet: `02h ${etaMins}m`, icao };
     } else {
       dep = (centerLat > 25.06 && centerLon > 121.45) ? "TSA" : "TPE";
-      arr = "巡航過境";
+      arr = "En Route";
       const atd = new Date((now - 1200) * 1000).toTimeString().substring(0, 5);
       const eta = new Date((now + 6800) * 1000).toTimeString().substring(0, 5);
       return { airline, dep, arr, atd, eta, eet: "02h 10m", icao };
@@ -645,11 +641,13 @@
     const status = document.getElementById('search-status');
     if (!input) return;
 
+    status.innerText = "Searching coordinates...";
+
     if (AIRPORT_DB[input]) {
       const [lat, lon] = AIRPORT_DB[input];
       document.getElementById('cfg-lat').value = lat.toFixed(4);
       document.getElementById('cfg-lon').value = lon.toFixed(4);
-      status.innerText = `✔ 已找到：${input}`;
+      status.innerText = `✔ Found: ${input}`;
       saveConfig();
       return;
     }
@@ -663,14 +661,14 @@
           const lon = json.results[0].longitude;
           document.getElementById('cfg-lat').value = lat.toFixed(4);
           document.getElementById('cfg-lon').value = lon.toFixed(4);
-          status.innerText = `✔ 已找到：${json.results[0].name}`;
+          status.innerText = `✔ Found: ${json.results[0].name}`;
           saveConfig();
           return;
         }
       }
     } catch(e) {}
 
-    status.innerText = "❌ 查無該機場代碼，請手動輸入經緯度";
+    status.innerText = "❌ Airport code not found. Please enter Lat/Lon manually.";
   }
 
   function openConfigModal() {
@@ -712,7 +710,6 @@
     updateSidebar();
   });
 
-  // 每 2.5 秒極速輪詢，零排隊、零卡頓
   setInterval(fetchFlightsInstant, 2500);
 </script>
 </body>
