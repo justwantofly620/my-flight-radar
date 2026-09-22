@@ -89,8 +89,9 @@
 
     .airbornes-tag { margin-top: auto; font-size: 14px; font-weight: bold; color: #00ff66; padding-top: 4px; }
 
-    /* 底部按鈕 */
-    .controls { margin-top: 8px; display: flex; gap: 6px; }
+    /* 底部控制列 */
+    .controls { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .btn-row { display: flex; gap: 6px; }
     .btn {
       flex: 1;
       background: #1e1e1e;
@@ -98,14 +99,15 @@
       color: #00e676;
       font-size: 12px;
       font-weight: bold;
-      padding: 10px 0;
+      padding: 9px 0;
       border-radius: 4px;
       cursor: pointer;
       text-align: center;
     }
     .btn:active { background: #333; }
+    .btn-cfg { background: #263238; color: #00e5ff; }
 
-    /* 飛機 Marker */
+    /* 飛機 Marker 樣式 */
     .plane-marker {
       display: flex;
       flex-direction: column;
@@ -130,6 +132,52 @@
       white-space: nowrap;
     }
     .focused .plane-label { color: #ffd700; border: 1px solid #ffd700; }
+
+    /* 設定位置彈窗 */
+    #config-modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 999;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-box {
+      background: #181a1b;
+      border: 1px solid #444;
+      border-radius: 8px;
+      width: 320px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .modal-box h3 { font-size: 15px; color: #00e5ff; text-align: center; }
+    .input-group { display: flex; flex-direction: column; gap: 3px; }
+    .input-group label { font-size: 11px; color: #aaa; }
+    .input-group input {
+      background: #222;
+      border: 1px solid #444;
+      color: #fff;
+      padding: 7px 8px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .search-row { display: flex; gap: 6px; }
+    .search-row input { flex: 1; text-transform: uppercase; font-weight: bold; color: #ffd700; letter-spacing: 1px; }
+    .btn-search {
+      width: 90px;
+      background: #00838f;
+      color: #fff;
+      font-weight: bold;
+      font-size: 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .modal-btns { display: flex; gap: 8px; margin-top: 6px; }
+    .status-hint { font-size: 11px; color: #ffd700; min-height: 14px; text-align: center; }
   </style>
 </head>
 <body>
@@ -181,8 +229,50 @@
     </div>
 
     <div class="controls">
-      <div class="btn" onclick="relocateToGPS()">📍 GPS 定位</div>
-      <div class="btn" onclick="resetToEVA()">🏢 回長榮訓練中心</div>
+      <div class="btn-row">
+        <div class="btn" onclick="relocateToGPS()">📍 GPS 定位</div>
+        <div class="btn" onclick="resetToEVA()">🏢 回長榮訓練中心</div>
+      </div>
+      <div class="btn btn-cfg" onclick="openConfigModal()">✈ 輸入機場代碼 / 設定座標</div>
+    </div>
+  </div>
+</div>
+
+<!-- 輸入機場代碼搜尋彈窗 -->
+<div id="config-modal">
+  <div class="modal-box">
+    <h3>✈ 機場代碼搜尋與定位</h3>
+
+    <div class="input-group">
+      <label>機場代碼 (IATA / ICAO，如 TPE, TSA, HND, KIX):</label>
+      <div class="search-row">
+        <input type="text" id="cfg-airport-code" placeholder="如 TPE, RCTP" />
+        <button class="btn-search" onclick="searchAirportCode()">搜尋前往</button>
+      </div>
+    </div>
+
+    <div id="search-status" class="status-hint"></div>
+
+    <div class="card-divider"></div>
+
+    <div class="input-group">
+      <label>中心緯度 (Latitude):</label>
+      <input type="number" step="0.0001" id="cfg-lat">
+    </div>
+
+    <div class="input-group">
+      <label>中心經度 (Longitude):</label>
+      <input type="number" step="0.0001" id="cfg-lon">
+    </div>
+
+    <div class="input-group">
+      <label>雷達半徑 (NM，預設 35):</label>
+      <input type="number" id="cfg-range" value="35">
+    </div>
+
+    <div class="modal-btns">
+      <div class="btn" style="background:#00e676; color:#000;" onclick="saveConfig()">儲存並套用</div>
+      <div class="btn" style="background:#444; color:#fff;" onclick="closeConfigModal()">取消</div>
     </div>
   </div>
 </div>
@@ -190,10 +280,40 @@
 <script>
   mapboxgl.accessToken = 'pk.eyJ1IjoiczE5ODgxMjA0IiwiYSI6ImNtdTZiNm8yMDA3OGgyd29nYnRicDI0aHIifQ.2sRRvPv8OaEvu5DAIJDlMw';
   
-  // 預設中心：長榮航太／訓練中心 (EVA)
-  let centerLat = 25.040060;
-  let centerLon = 121.298676;
+  // 常用主要機場快速比對庫（免連線秒查）
+  const AIRPORT_DB = {
+    "TPE": [25.0797, 121.2342], "RCTP": [25.0797, 121.2342],
+    "TSA": [25.0697, 121.5525], "RCSS": [25.0697, 121.5525],
+    "RMQ": [24.2644, 120.6208], "RCMQ": [24.2644, 120.6208],
+    "KHH": [22.5711, 120.3500], "RCKH": [22.5711, 120.3500],
+    "TNN": [22.9504, 120.2058], "RCNN": [22.9504, 120.2058],
+    "HND": [35.5494, 139.7798], "RJTT": [35.5494, 139.7798],
+    "NRT": [35.7647, 140.3863], "RJAA": [35.7647, 140.3863],
+    "KIX": [34.4347, 135.2442], "RJBB": [34.4347, 135.2442],
+    "FUK": [33.5859, 130.4507], "RJFF": [33.5859, 130.4507],
+    "OKA": [26.1958, 127.6458], "ROAH": [26.1958, 127.6458],
+    "HKG": [22.3080, 113.9185], "VHHH": [22.3080, 113.9185],
+    "MFM": [22.1496, 113.5915], "VMMC": [22.1496, 113.5915],
+    "ICN": [37.4602, 126.4407], "RKSI": [37.4602, 126.4407],
+    "GMP": [35.5941, 126.7972], "RKSS": [35.5941, 126.7972],
+    "BKK": [13.6900, 100.7501], "VTBS": [13.6900, 100.7501],
+    "DMK": [13.9126, 100.6068], "VTBD": [13.9126, 100.6068],
+    "SIN": [1.3644, 103.9915],  "WSSS": [1.3644, 103.9915],
+    "KUL": [2.7456, 101.7072],  "WMKK": [2.7456, 101.7072],
+    "LAX": [33.9416, -118.4085],"KLAX": [33.9416, -118.4085],
+    "SFO": [37.6213, -122.3790],"KSFO": [37.6213, -122.3790],
+    "SEA": [47.4502, -122.3088],"KSEA": [47.4502, -122.3088],
+    "JFK": [40.6413, -73.7781], "KJFK": [40.6413, -73.7781],
+    "LHR": [51.4700, -0.4543],  "EGLL": [51.4700, -0.4543],
+    "CDG": [49.0097, 2.5479],   "LFPG": [49.0097, 2.5479],
+    "FRA": [50.0379, 8.5622],   "EDDF": [50.0379, 8.5622]
+  };
+
+  let centerLat = parseFloat(localStorage.getItem('radar_lat')) || 25.040060;
+  let centerLon = parseFloat(localStorage.getItem('radar_lon')) || 121.298676;
+  let radarRangeNm = parseInt(localStorage.getItem('radar_range')) || 35;
   let currentZoom = 10;
+
   let selectedCallsign = null;
   let planesData = [];
   let markers = {};
@@ -211,7 +331,6 @@
     attributionControl: false
   });
 
-  // 計算距圈多邊形 GeoJSON
   function createGeoJSONCircle(center, radiusInKm, points = 64) {
     const coords = { latitude: center[1], longitude: center[0] };
     const km = radiusInKm;
@@ -232,7 +351,6 @@
     };
   }
 
-  // 繪製航電距圈
   function updateRadarRings() {
     const r10 = createGeoJSONCircle([centerLon, centerLat], 10 * 1.852);
     const r20 = createGeoJSONCircle([centerLon, centerLat], 20 * 1.852);
@@ -279,7 +397,6 @@
     fetchFlights();
   });
 
-  // 即時時鐘
   function updateClock() {
     const now = new Date();
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -298,51 +415,76 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // ADS-B 抓取（使用 AllOrigins 專屬代理，徹底解決 CORS 封鎖）
+  // ADS-B 飛機資料抓取
   async function fetchFlights() {
-    const rangeNm = 35;
-    const targetUrl = `https://api.adsb.lol/v2/lat/${centerLat.toFixed(6)}/lon/${centerLon.toFixed(6)}/dist/${rangeNm}`;
+    const dLat = (radarRangeNm / 60.0);
+    const dLon = (radarRangeNm / (60.0 * Math.cos(centerLat * Math.PI / 180)));
     
-    // 雙代理容錯：AllOrigins (最穩定解碼) + 直連備援
-    const proxyUrls = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-      targetUrl
-    ];
+    const lamin = (centerLat - dLat).toFixed(4);
+    const lamax = (centerLat + dLat).toFixed(4);
+    const lomin = (centerLon - dLon).toFixed(4);
+    const lomax = (centerLon + dLon).toFixed(4);
 
-    let data = null;
-    for (const url of proxyUrls) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) {
-          data = await res.json();
-          if (data && (data.ac || Array.isArray(data.aircraft))) break;
+    let parsedPlanes = [];
+
+    // 端點 1：OpenSky
+    try {
+      const res = await fetch(`https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.states) {
+          parsedPlanes = json.states.map(s => {
+            const cs = (s[1] || "N/A").trim();
+            const lon = s[5];
+            const lat = s[6];
+            const alt = s[7] ? Math.round(s[7] * 3.28084) : 0;
+            const spd = s[9] ? Math.round(s[9] * 1.94384) : 0;
+            const trk = s[10] || 0;
+            const dist = calcDistance(centerLat, centerLon, lat, lon);
+            return {
+              callsign: cs,
+              type: "COMM",
+              reg: (s[0] || "").toUpperCase(),
+              lat: lat,
+              lon: lon,
+              alt: alt,
+              speed: spd,
+              track: trk,
+              dist: dist
+            };
+          });
         }
-      } catch (err) {
-        // 嘗試下一個
       }
+    } catch(err) {}
+
+    // 端點 2 備援：adsb.fi
+    if (parsedPlanes.length === 0) {
+      try {
+        const res = await fetch(`https://opendata.adsb.fi/api/v2/lat/${centerLat.toFixed(4)}/lon/${centerLon.toFixed(4)}/dist/${radarRangeNm}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.aircraft) {
+            parsedPlanes = json.aircraft.filter(p => p.lat && p.lon).map(p => {
+              const cs = (p.flight || "N/A").trim();
+              const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
+              return {
+                callsign: cs,
+                type: p.t || "UNK",
+                reg: p.r || "---",
+                lat: p.lat,
+                lon: p.lon,
+                alt: p.alt_baro || 0,
+                speed: p.gs || 0,
+                track: p.track || 0,
+                dist: dist
+              };
+            });
+          }
+        }
+      } catch(e) {}
     }
 
-    if (!data) return;
-    const acList = data.ac || data.aircraft || [];
-
-    planesData = acList.filter(p => p.lat && p.lon).map(p => {
-      const cs = (p.flight || "N/A").trim();
-      const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
-      return {
-        callsign: cs,
-        type: p.t || "UNK",
-        reg: p.r || "---",
-        lat: p.lat,
-        lon: p.lon,
-        alt: p.alt_baro || 0,
-        speed: p.gs || 0,
-        track: p.track || 0,
-        dist: dist
-      };
-    });
-
-    planesData.sort((a, b) => a.dist - b.dist);
+    planesData = parsedPlanes.sort((a, b) => a.dist - b.dist);
     renderPlanesOnMap();
     updateSidebar();
   }
@@ -460,7 +602,7 @@
 
     let dep = "---", arr = "---";
     try {
-      const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://api.adsbdb.com/v0/callsign/${callsign}`)}`);
+      const res = await fetch(`https://api.adsbdb.com/v0/callsign/${callsign}`);
       if (res.ok) {
         const d = await res.json();
         const route = d.response?.flightroute;
@@ -508,6 +650,8 @@
   function resetToEVA() {
     centerLat = 25.040060;
     centerLon = 121.298676;
+    localStorage.setItem('radar_lat', centerLat);
+    localStorage.setItem('radar_lon', centerLon);
     map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
     updateRadarRings();
     fetchFlights();
@@ -518,10 +662,100 @@
       navigator.geolocation.getCurrentPosition(pos => {
         centerLat = pos.coords.latitude;
         centerLon = pos.coords.longitude;
+        localStorage.setItem('radar_lat', centerLat);
+        localStorage.setItem('radar_lon', centerLon);
         map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
         updateRadarRings();
         fetchFlights();
       });
+    }
+  }
+
+  // 機場代碼搜尋功能 (核心改造)
+  async function searchAirportCode() {
+    const input = document.getElementById('cfg-airport-code').value.trim().toUpperCase();
+    const status = document.getElementById('search-status');
+    if (!input) return;
+
+    status.innerText = "搜尋機場座標中...";
+
+    // 1. 本地航空字典秒查
+    if (AIRPORT_DB[input]) {
+      const [lat, lon] = AIRPORT_DB[input];
+      document.getElementById('cfg-lat').value = lat.toFixed(4);
+      document.getElementById('cfg-lon').value = lon.toFixed(4);
+      status.innerText = `✔ 已找到機場：${input}`;
+      saveConfig();
+      return;
+    }
+
+    // 2. 線上全球航空 API (Open-Meteo Geocoding)
+    try {
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(input)}&count=1&language=en&format=json`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.results && json.results.length > 0) {
+          const lat = json.results[0].latitude;
+          const lon = json.results[0].longitude;
+          document.getElementById('cfg-lat').value = lat.toFixed(4);
+          document.getElementById('cfg-lon').value = lon.toFixed(4);
+          status.innerText = `✔ 已找到：${json.results[0].name}`;
+          saveConfig();
+          return;
+        }
+      }
+    } catch(e) {}
+
+    // 3. 線上 Nominatim 航空搜尋備援
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(input + ' airport')}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.length > 0) {
+          const lat = parseFloat(json[0].lat);
+          const lon = parseFloat(json[0].lon);
+          document.getElementById('cfg-lat').value = lat.toFixed(4);
+          document.getElementById('cfg-lon').value = lon.toFixed(4);
+          status.innerText = `✔ 已找到：${input}`;
+          saveConfig();
+          return;
+        }
+      }
+    } catch(e) {}
+
+    status.innerText = "❌ 查無該機場代碼，請手動輸入經緯度";
+  }
+
+  function openConfigModal() {
+    document.getElementById('cfg-lat').value = centerLat.toFixed(4);
+    document.getElementById('cfg-lon').value = centerLon.toFixed(4);
+    document.getElementById('cfg-range').value = radarRangeNm;
+    document.getElementById('search-status').innerText = "";
+    document.getElementById('config-modal').style.display = 'flex';
+  }
+
+  function closeConfigModal() {
+    document.getElementById('config-modal').style.display = 'none';
+  }
+
+  function saveConfig() {
+    const lat = parseFloat(document.getElementById('cfg-lat').value);
+    const lon = parseFloat(document.getElementById('cfg-lon').value);
+    const range = parseInt(document.getElementById('cfg-range').value) || 35;
+
+    if (!isNaN(lat) && !isNaN(lon)) {
+      centerLat = lat;
+      centerLon = lon;
+      radarRangeNm = range;
+
+      localStorage.setItem('radar_lat', centerLat);
+      localStorage.setItem('radar_lon', centerLon);
+      localStorage.setItem('radar_range', radarRangeNm);
+
+      closeConfigModal();
+      map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+      updateRadarRings();
+      fetchFlights();
     }
   }
 
