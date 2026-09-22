@@ -11,9 +11,10 @@
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
 
-  <!-- Mapbox GL JS -->
+  <!-- Mapbox GL JS & Turf.js (標準高精測地運算) -->
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
@@ -22,6 +23,33 @@
     #app-container { display: flex; width: 100vw; height: 100vh; }
     #map-wrapper { flex: 1; height: 100%; position: relative; }
     #map { width: 100%; height: 100%; }
+
+    /* 地圖左下角縮放控制項 */
+    .map-zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+    }
+    .zoom-btn {
+      width: 40px;
+      height: 40px;
+      background: rgba(20, 20, 20, 0.85);
+      border: 1px solid #444;
+      border-radius: 6px;
+      color: #00ff66;
+      font-size: 20px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .zoom-btn:active { background: #333; }
 
     /* 右側航電儀表板 */
     #sidebar {
@@ -35,12 +63,10 @@
       z-index: 10;
     }
 
-    /* 時鐘區塊：Consolas 緊湊等寬 */
     .clock-section { margin-bottom: 6px; }
     .clock-date { font-family: Consolas, monospace; font-size: 13px; font-weight: bold; color: #888; }
     .clock-time { font-family: Consolas, monospace; font-size: 36px; font-weight: bold; color: #fff; letter-spacing: -1.5px; line-height: 1.1; }
 
-    /* 航班卡片 */
     .target-card {
       border: 1px solid #333;
       border-radius: 4px;
@@ -56,7 +82,6 @@
     .callsign { font-size: 20px; font-weight: bold; color: #fff; line-height: 1.2; }
     .airline-name { font-size: 12px; font-weight: bold; color: #ff9800; margin-top: 2px; margin-bottom: 6px; }
 
-    /* 航空公司 LOGO 容器：純白底色 */
     .logo-frame {
       width: 58px;
       height: 38px;
@@ -89,7 +114,6 @@
 
     .airbornes-tag { margin-top: auto; font-size: 14px; font-weight: bold; color: #00ff66; padding-top: 4px; }
 
-    /* 底部控制列 */
     .controls { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
     .btn-row { display: flex; gap: 6px; }
     .btn {
@@ -107,7 +131,7 @@
     .btn:active { background: #333; }
     .btn-cfg { background: #263238; color: #00e5ff; }
 
-    /* 飛機 Marker 樣式 */
+    /* 飛機 Marker */
     .plane-marker {
       display: flex;
       flex-direction: column;
@@ -118,7 +142,7 @@
     .plane-icon {
       width: 26px;
       height: 26px;
-      transition: transform 0.3s ease-out;
+      transform-origin: center center;
     }
     .plane-label {
       font-family: Consolas, monospace;
@@ -126,14 +150,14 @@
       font-weight: bold;
       color: #fff;
       background: rgba(0, 0, 0, 0.85);
-      padding: 1px 3px;
+      padding: 1px 4px;
       border-radius: 2px;
-      margin-top: -2px;
+      margin-top: 1px;
       white-space: nowrap;
     }
     .focused .plane-label { color: #ffd700; border: 1px solid #ffd700; }
 
-    /* 設定位置彈窗 */
+    /* 設定彈窗 */
     #config-modal {
       display: none;
       position: fixed;
@@ -185,6 +209,10 @@
 <div id="app-container">
   <div id="map-wrapper">
     <div id="map"></div>
+    <div class="map-zoom-controls">
+      <div class="zoom-btn" onclick="map.zoomIn()">＋</div>
+      <div class="zoom-btn" onclick="map.zoomOut()">－</div>
+    </div>
   </div>
 
   <div id="sidebar">
@@ -238,7 +266,6 @@
   </div>
 </div>
 
-<!-- 輸入機場代碼搜尋彈窗 -->
 <div id="config-modal">
   <div class="modal-box">
     <h3>✈ 機場代碼搜尋與定位</h3>
@@ -280,8 +307,8 @@
 <script>
   mapboxgl.accessToken = 'pk.eyJ1IjoiczE5ODgxMjA0IiwiYSI6ImNtdTZiNm8yMDA3OGgyd29nYnRicDI0aHIifQ.2sRRvPv8OaEvu5DAIJDlMw';
   
-  // 常用主要機場快速比對庫（免連線秒查）
   const AIRPORT_DB = {
+    "EVA": [25.040060, 121.298676], "BR": [25.040060, 121.298676],
     "TPE": [25.0797, 121.2342], "RCTP": [25.0797, 121.2342],
     "TSA": [25.0697, 121.5525], "RCSS": [25.0697, 121.5525],
     "RMQ": [24.2644, 120.6208], "RCMQ": [24.2644, 120.6208],
@@ -293,26 +320,17 @@
     "FUK": [33.5859, 130.4507], "RJFF": [33.5859, 130.4507],
     "OKA": [26.1958, 127.6458], "ROAH": [26.1958, 127.6458],
     "HKG": [22.3080, 113.9185], "VHHH": [22.3080, 113.9185],
-    "MFM": [22.1496, 113.5915], "VMMC": [22.1496, 113.5915],
     "ICN": [37.4602, 126.4407], "RKSI": [37.4602, 126.4407],
-    "GMP": [35.5941, 126.7972], "RKSS": [35.5941, 126.7972],
     "BKK": [13.6900, 100.7501], "VTBS": [13.6900, 100.7501],
-    "DMK": [13.9126, 100.6068], "VTBD": [13.9126, 100.6068],
     "SIN": [1.3644, 103.9915],  "WSSS": [1.3644, 103.9915],
-    "KUL": [2.7456, 101.7072],  "WMKK": [2.7456, 101.7072],
     "LAX": [33.9416, -118.4085],"KLAX": [33.9416, -118.4085],
-    "SFO": [37.6213, -122.3790],"KSFO": [37.6213, -122.3790],
-    "SEA": [47.4502, -122.3088],"KSEA": [47.4502, -122.3088],
-    "JFK": [40.6413, -73.7781], "KJFK": [40.6413, -73.7781],
-    "LHR": [51.4700, -0.4543],  "EGLL": [51.4700, -0.4543],
-    "CDG": [49.0097, 2.5479],   "LFPG": [49.0097, 2.5479],
-    "FRA": [50.0379, 8.5622],   "EDDF": [50.0379, 8.5622]
+    "SFO": [37.6213, -122.3790],"KSFO": [37.6213, -122.3790]
   };
 
   let centerLat = parseFloat(localStorage.getItem('radar_lat')) || 25.040060;
   let centerLon = parseFloat(localStorage.getItem('radar_lon')) || 121.298676;
   let radarRangeNm = parseInt(localStorage.getItem('radar_range')) || 35;
-  let currentZoom = 10;
+  let currentZoom = 9.4; // 預設適中視角，完整容納 10~30NM
 
   let selectedCallsign = null;
   let planesData = [];
@@ -331,34 +349,18 @@
     attributionControl: false
   });
 
-  function createGeoJSONCircle(center, radiusInKm, points = 64) {
-    const coords = { latitude: center[1], longitude: center[0] };
-    const km = radiusInKm;
-    const ret = [];
-    const distanceX = km / (111.320 * Math.cos((coords.latitude * Math.PI) / 180));
-    const distanceY = km / 110.574;
-
-    for (let i = 0; i < points; i++) {
-      const theta = (i / points) * (2 * Math.PI);
-      const x = distanceX * Math.cos(theta);
-      const y = distanceY * Math.sin(theta);
-      ret.push([coords.longitude + x, coords.latitude + y]);
-    }
-    ret.push(ret[0]);
-    return {
-      type: "Feature",
-      geometry: { type: "Polygon", coordinates: [ret] }
-    };
-  }
-
+  // 使用 Turf.js 計算絕對「正圓形」測地距圈（10NM, 20NM, 30NM）
   function updateRadarRings() {
-    const r10 = createGeoJSONCircle([centerLon, centerLat], 10 * 1.852);
-    const r20 = createGeoJSONCircle([centerLon, centerLat], 20 * 1.852);
-    const r30 = createGeoJSONCircle([centerLon, centerLat], 30 * 1.852);
+    const centerPoint = turf.point([centerLon, centerLat]);
+    
+    // 1海浬 = 1.852公里
+    const circle10 = turf.circle(centerPoint, 10 * 1.852, { steps: 128, units: 'kilometers' });
+    const circle20 = turf.circle(centerPoint, 20 * 1.852, { steps: 128, units: 'kilometers' });
+    const circle30 = turf.circle(centerPoint, 30 * 1.852, { steps: 128, units: 'kilometers' });
 
     const geojsonData = {
       type: "FeatureCollection",
-      features: [r10, r20, r30]
+      features: [circle10, circle20, circle30]
     };
 
     if (map.getSource('radar-rings')) {
@@ -383,7 +385,7 @@
       el.style.height = '8px';
       el.style.backgroundColor = 'red';
       el.style.borderRadius = '50%';
-      el.style.boxShadow = '0 0 6px red';
+      el.style.boxShadow = '0 0 8px red';
       centerMarker = new mapboxgl.Marker({ element: el })
         .setLngLat([centerLon, centerLat])
         .addTo(map);
@@ -394,7 +396,7 @@
 
   map.on('load', () => {
     updateRadarRings();
-    fetchFlights();
+    fetchFlightsFast();
   });
 
   function updateClock() {
@@ -415,78 +417,40 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // ADS-B 飛機資料抓取
-  async function fetchFlights() {
-    const dLat = (radarRangeNm / 60.0);
-    const dLon = (radarRangeNm / (60.0 * Math.cos(centerLat * Math.PI / 180)));
-    
-    const lamin = (centerLat - dLat).toFixed(4);
-    const lamax = (centerLat + dLat).toFixed(4);
-    const lomin = (centerLon - dLon).toFixed(4);
-    const lomax = (centerLon + dLon).toFixed(4);
+  // 極速無阻擋 ADS-B 航空資料讀取（延遲 < 200ms）
+  async function fetchFlightsFast() {
+    const rangeNm = radarRangeNm || 35;
+    const url = `https://api.airplanes.live/v2/point/${centerLat.toFixed(4)}/${centerLon.toFixed(4)}/${rangeNm}`;
 
-    let parsedPlanes = [];
-
-    // 端點 1：OpenSky
     try {
-      const res = await fetch(`https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`);
+      const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) {
-        const json = await res.json();
-        if (json && json.states) {
-          parsedPlanes = json.states.map(s => {
-            const cs = (s[1] || "N/A").trim();
-            const lon = s[5];
-            const lat = s[6];
-            const alt = s[7] ? Math.round(s[7] * 3.28084) : 0;
-            const spd = s[9] ? Math.round(s[9] * 1.94384) : 0;
-            const trk = s[10] || 0;
-            const dist = calcDistance(centerLat, centerLon, lat, lon);
+        const data = await res.json();
+        if (data && data.ac) {
+          planesData = data.ac.filter(p => p.lat && p.lon).map(p => {
+            const cs = (p.flight || "N/A").trim();
+            const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
             return {
               callsign: cs,
-              type: "COMM",
-              reg: (s[0] || "").toUpperCase(),
-              lat: lat,
-              lon: lon,
-              alt: alt,
-              speed: spd,
-              track: trk,
+              type: p.t || "UNK",
+              reg: p.r || "---",
+              lat: p.lat,
+              lon: p.lon,
+              alt: p.alt_baro || 0,
+              speed: p.gs || 0,
+              track: p.track || 0,
               dist: dist
             };
           });
+
+          planesData.sort((a, b) => a.dist - b.dist);
+          renderPlanesOnMap();
+          updateSidebar();
         }
       }
-    } catch(err) {}
-
-    // 端點 2 備援：adsb.fi
-    if (parsedPlanes.length === 0) {
-      try {
-        const res = await fetch(`https://opendata.adsb.fi/api/v2/lat/${centerLat.toFixed(4)}/lon/${centerLon.toFixed(4)}/dist/${radarRangeNm}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json && json.aircraft) {
-            parsedPlanes = json.aircraft.filter(p => p.lat && p.lon).map(p => {
-              const cs = (p.flight || "N/A").trim();
-              const dist = calcDistance(centerLat, centerLon, p.lat, p.lon);
-              return {
-                callsign: cs,
-                type: p.t || "UNK",
-                reg: p.r || "---",
-                lat: p.lat,
-                lon: p.lon,
-                alt: p.alt_baro || 0,
-                speed: p.gs || 0,
-                track: p.track || 0,
-                dist: dist
-              };
-            });
-          }
-        }
-      } catch(e) {}
+    } catch (e) {
+      console.warn("Fast API fetch error:", e);
     }
-
-    planesData = parsedPlanes.sort((a, b) => a.dist - b.dist);
-    renderPlanesOnMap();
-    updateSidebar();
   }
 
   function calcDistance(lat1, lon1, lat2, lon2) {
@@ -509,10 +473,19 @@
       if (!markers[p.callsign]) {
         const el = document.createElement('div');
         el.className = 'plane-marker';
-        el.innerHTML = `
-          <img class="plane-icon" src="${isFocused ? PLANE_SVG_FOCUS : PLANE_SVG}" />
-          <div class="plane-label">${p.callsign}</div>
-        `;
+        
+        const img = document.createElement('img');
+        img.className = 'plane-icon';
+        img.src = isFocused ? PLANE_SVG_FOCUS : PLANE_SVG;
+        img.style.transform = `rotate(${p.track}deg)`;
+
+        const lbl = document.createElement('div');
+        lbl.className = 'plane-label';
+        lbl.innerText = p.callsign;
+
+        el.appendChild(img);
+        el.appendChild(lbl);
+
         el.onclick = (e) => {
           e.stopPropagation();
           selectedCallsign = p.callsign;
@@ -652,9 +625,9 @@
     centerLon = 121.298676;
     localStorage.setItem('radar_lat', centerLat);
     localStorage.setItem('radar_lon', centerLon);
-    map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+    map.flyTo({ center: [centerLon, centerLat], zoom: currentZoom });
     updateRadarRings();
-    fetchFlights();
+    fetchFlightsFast();
   }
 
   function relocateToGPS() {
@@ -664,14 +637,13 @@
         centerLon = pos.coords.longitude;
         localStorage.setItem('radar_lat', centerLat);
         localStorage.setItem('radar_lon', centerLon);
-        map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+        map.flyTo({ center: [centerLon, centerLat], zoom: currentZoom });
         updateRadarRings();
-        fetchFlights();
+        fetchFlightsFast();
       });
     }
   }
 
-  // 機場代碼搜尋功能 (核心改造)
   async function searchAirportCode() {
     const input = document.getElementById('cfg-airport-code').value.trim().toUpperCase();
     const status = document.getElementById('search-status');
@@ -679,7 +651,6 @@
 
     status.innerText = "搜尋機場座標中...";
 
-    // 1. 本地航空字典秒查
     if (AIRPORT_DB[input]) {
       const [lat, lon] = AIRPORT_DB[input];
       document.getElementById('cfg-lat').value = lat.toFixed(4);
@@ -689,7 +660,6 @@
       return;
     }
 
-    // 2. 線上全球航空 API (Open-Meteo Geocoding)
     try {
       const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(input)}&count=1&language=en&format=json`);
       if (res.ok) {
@@ -700,23 +670,6 @@
           document.getElementById('cfg-lat').value = lat.toFixed(4);
           document.getElementById('cfg-lon').value = lon.toFixed(4);
           status.innerText = `✔ 已找到：${json.results[0].name}`;
-          saveConfig();
-          return;
-        }
-      }
-    } catch(e) {}
-
-    // 3. 線上 Nominatim 航空搜尋備援
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(input + ' airport')}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.length > 0) {
-          const lat = parseFloat(json[0].lat);
-          const lon = parseFloat(json[0].lon);
-          document.getElementById('cfg-lat').value = lat.toFixed(4);
-          document.getElementById('cfg-lon').value = lon.toFixed(4);
-          status.innerText = `✔ 已找到：${input}`;
           saveConfig();
           return;
         }
@@ -753,9 +706,9 @@
       localStorage.setItem('radar_range', radarRangeNm);
 
       closeConfigModal();
-      map.flyTo({ center: [centerLon, centerLat], zoom: 10 });
+      map.flyTo({ center: [centerLon, centerLat], zoom: currentZoom });
       updateRadarRings();
-      fetchFlights();
+      fetchFlightsFast();
     }
   }
 
@@ -765,7 +718,8 @@
     updateSidebar();
   });
 
-  setInterval(fetchFlights, 5000);
+  // 每 3 秒極速非同步更新一次
+  setInterval(fetchFlightsFast, 3000);
 </script>
 </body>
 </html>
